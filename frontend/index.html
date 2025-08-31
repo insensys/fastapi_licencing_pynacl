@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>PyNaCl License Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- tweetnacl (быстрая сборка) -->
+  <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js" integrity="sha256-9WZ6Bf3Zw2I9S6O3hH0WQq8kT8X6s5R+U5e9R7r3qjA=" crossorigin="anonymous"></script>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    code { background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>PyNaCl License Demo</h1>
+  <div id="status">Загрузка лицензии...</div>
+  <pre id="details"></pre>
+
+  <script>
+    const BACKEND = 'http://localhost:8000';
+
+    function b64ToBytes(b64) {
+      const bin = atob(b64);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+    function bytesToB64(bytes) {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    }
+
+    (async () => {
+      const statusEl = document.getElementById('status');
+      const detailsEl = document.getElementById('details');
+
+      try {
+        // 1) Запрашиваем лицензию
+        const licRes = await fetch(`${BACKEND}/license`, { method: 'GET' });
+        if (!licRes.ok) throw new Error(`/license failed: ${licRes.status}`);
+        const lic = await licRes.json();
+
+        const payloadBytes = b64ToBytes(lic.payload);
+        const sigBytes = b64ToBytes(lic.sig);
+        const pubBytes = b64ToBytes(lic.pub);
+
+        // 2) Проверяем подпись на фронтенде
+        const ok = nacl.sign.detached.verify(payloadBytes, sigBytes, pubBytes);
+        if (!ok) {
+          statusEl.textContent = 'Лицензия недействительна (frontend)';
+          return;
+        }
+
+        // Показываем детали payload
+        const payloadText = new TextDecoder().decode(payloadBytes);
+        const payloadObj = JSON.parse(payloadText);
+        detailsEl.textContent =
+          'Payload (JSON):\n' + payloadText + '\n\n' +
+          'Публичный ключ (base64): ' + lic.pub + '\n' +
+          'Подпись (base64): ' + lic.sig + '\n';
+
+        statusEl.textContent = 'Лицензия ОК, загружаем приложение...';
+
+        // 3) Вызываем защищённый эндпойнт, передавая лицензию в заголовках
+        const helloRes = await fetch(`${BACKEND}/api/hello`, {
+          method: 'GET',
+          headers: {
+            'X-Payload': lic.payload,
+            'X-Signature': lic.sig,
+            'X-Pub': lic.pub,
+          },
+        });
+
+        if (!helloRes.ok) {
+          const msg = await helloRes.text();
+          throw new Error(`/api/hello failed: ${helloRes.status} ${msg}`);
+        }
+
+        const text = await helloRes.text();
+        statusEl.textContent = `Ответ бэкенда: ${text}`;
+      } catch (err) {
+        statusEl.textContent = 'Ошибка: ' + (err?.message || String(err));
+      }
+    })();
+  </script>
+</body>
+</html>
